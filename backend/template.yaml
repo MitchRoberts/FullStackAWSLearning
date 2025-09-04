@@ -1,0 +1,46 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Bookmark Vault API (Step 1: health check)
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 10
+    MemorySize: 256
+    Environment:
+      Variables:
+        # reserved for later steps (Mongo/Cognito)
+        MONGODB_SECRET_ID: dev/mongodb/uri
+        DB_NAME: bookmark_vault
+        COLLECTION: bookmarks
+
+Resources:
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: ['*']                  # tighten later to domain
+        AllowHeaders: ['content-type']
+        AllowMethods: ['GET','OPTIONS']
+
+  ApiFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handler.handler
+      Events:
+        Health:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /health, Method: GET }
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints: [src/handler.ts]
+        Minify: true
+        Sourcemap: true
+        Target: "es2020"
+        Platform: "node"
+        External: []
+
+Outputs:
+  ApiBaseUrl:
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"

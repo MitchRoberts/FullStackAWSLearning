@@ -1,0 +1,16 @@
+{
+  "name": "bookmark-vault-backend",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "echo Build handled by SAM/esbuild" },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.645.0",
+    "mongodb": "^6.8.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.137",
+    "@types/node": "^20.12.12",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.4.5"
+  }
+}
