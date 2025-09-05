@@ -138,7 +138,6 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
     if (!match) return json(404, { error: "Not found" });
 
-    // extract named params if your regex uses (?<name>...)
     const params = match.pattern.exec(path)?.groups ?? {};
     const db = await getDb();
     return await match.handler({ event, db, params });

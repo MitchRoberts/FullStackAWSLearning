@@ -17,6 +17,8 @@
   },
   "homepage": "https://github.com/MitchRoberts/FullStackAWSLearning#readme",
   "dependencies": {
-    "mongodb": "^6.19.0"
+    "framer-motion": "^12.23.12",
+    "mongodb": "^6.19.0",
+    "motion": "^12.23.12"
   }
 }
