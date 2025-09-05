@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Bookmark Vault API (health + bookmarks)
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 10
+    MemorySize: 256
+    Environment:
+      Variables:
+        MONGODB_SECRET_ID: dev/mongodb/uri
+        DB_NAME: bookmark_vault
+        COLLECTION: bookmarks
+Resources:
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+        - '*'
+        AllowHeaders:
+        - content-type
+        - x-user-id
+        AllowMethods:
+        - GET
+        - POST
+        - OPTIONS
+  ApiFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handler.handler
+      Policies:
+      - AWSSecretsManagerGetSecretValuePolicy:
+          SecretArn:
+            Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:dev/mongodb/uri-*
+      Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /health
+            Method: GET
+        GetBookmarks:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /bookmarks
+            Method: GET
+        CreateBookmark:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /bookmarks
+            Method: POST
+      CodeUri: ApiFn
+      Environment:
+        Variables:
+          NODE_OPTIONS: ' --enable-source-maps'
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+        - src/handler.ts
+        External: []
+        Minify: true
+        Platform: node
+        Sourcemap: true
+        Target: es2020
+      SamResourceId: ApiFn
+Outputs:
+  ApiBaseUrl:
+    Value:
+      Fn::Sub: https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com

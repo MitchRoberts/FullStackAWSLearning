@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Bookmark Vault API (Step 1: health check)
+Description: Bookmark Vault API (health + bookmarks)
 
 Globals:
   Function:
@@ -9,7 +9,6 @@ Globals:
     MemorySize: 256
     Environment:
       Variables:
-        # reserved for later steps (Mongo/Cognito)
         MONGODB_SECRET_ID: dev/mongodb/uri
         DB_NAME: bookmark_vault
         COLLECTION: bookmarks
@@ -19,18 +18,27 @@ Resources:
     Type: AWS::Serverless::HttpApi
     Properties:
       CorsConfiguration:
-        AllowOrigins: ['*']                  # tighten later to domain
-        AllowHeaders: ['content-type']
-        AllowMethods: ['GET','OPTIONS']
+        AllowOrigins: ['*']
+        AllowHeaders: ['content-type','x-user-id']
+        AllowMethods: ['GET','POST','OPTIONS']
 
   ApiFn:
     Type: AWS::Serverless::Function
     Properties:
       Handler: src/handler.handler
+      Policies:
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:dev/mongodb/uri-*
       Events:
         Health:
           Type: HttpApi
-          Properties: { ApiId: !Ref HttpApi, Path: /health, Method: GET }
+          Properties: { ApiId: !Ref HttpApi, Path: /health,     Method: GET }
+        GetBookmarks:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /bookmarks,  Method: GET }
+        CreateBookmark:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /bookmarks,  Method: POST }
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
