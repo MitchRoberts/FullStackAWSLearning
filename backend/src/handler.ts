@@ -9,10 +9,19 @@ type Bookmark = {
   url: string;
   title?: string;
   tags?: string[];
-  iPublic?: boolean;
+  isPublic?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
+
+type JwtClaims = {
+  sub: string;       //owner id          
+  email?: string;
+  "cognito:groups"?: string[] | string;
+  [k: string]: any;
+};
+
+const COLLECTION = process.env.COLLECTION || "bookmarks";
 
 const sm = new SecretsManagerClient({});
 let cachedSecret: SecretShape | undefined;
@@ -26,12 +35,39 @@ const json = (statusCode: number, body: unknown): APIGatewayProxyResultV2 => ({
   body: JSON.stringify(body),
 });
 
+function getClaims(event: APIGatewayProxyEventV2): JwtClaims | null {
+  return (event.requestContext as any)?.authorizer?.jwt?.claims ?? null;
+}
+
+function getUserId(event: APIGatewayProxyEventV2): string {
+  const c = getClaims(event);
+  if (!c?.sub) {
+    throw new Error("Unauthed: missing sub claim");
+  }
+  return c.sub;
+}
+
+function getEmail(event: APIGatewayProxyEventV2): string | undefined {
+  return getClaims(event)?.email;
+}
+
+function getGroups(event: APIGatewayProxyEventV2): string[] {
+  const g = getClaims(event)?.["cognito:groups"];
+  return Array.isArray(g) ? g : g ? [g] : [];
+}
+
 async function getSecret(): Promise<SecretShape> {
   if (!cachedSecret) {
     const { SecretString } = await sm.send(
-      new GetSecretValueCommand({ SecretId: process.env.MONGODB_SECRET_ID! })
+      new GetSecretValueCommand({ SecretId: process.env.MONGODB_SECRET_NAME! })
     );
-    cachedSecret = JSON.parse(SecretString || "{}") as SecretShape;
+    const raw = SecretString || "";
+    try {
+      const parsed = JSON.parse(raw);
+      cachedSecret = parsed as SecretShape;
+    } catch {
+      cachedSecret = {MONGODB_URI: raw };
+    }
   }
   return cachedSecret!;
 }
@@ -47,7 +83,7 @@ async function getDb(): Promise<Db> {
   }
   cachedDb = cachedClient.db(process.env.DB_NAME)
   if (!indexesEnsured) {
-    await cachedDb.collection(process.env.COLLECTION!).createIndexes([
+    await cachedDb.collection(COLLECTION!).createIndexes([
       { key: { ownerId: 1, updatedAt: -1 }, name: "owner_updatedAt" },
       { key: { tags: 1 }, name: "tags" },
     ]);
@@ -57,12 +93,7 @@ async function getDb(): Promise<Db> {
 }
 
 function getOwnerId(event: APIGatewayProxyEventV2): string {
-  return event.headers?.["x-user-id"] || event.headers?.["X-User-Id"] || "demo-user";
-}
-
-function me(event: APIGatewayProxyEventV2): string {
-  // TEMP until Cognito: read identity from header
-  return event.headers?.["x-user-id"] || event.headers?.["X-User-Id"] || "demo-user";
+  return getUserId(event);
 }
 
 /* ==========  B) Route table  ========== */
@@ -90,11 +121,11 @@ const routes: Array<{ method: string, pattern: RegExp, handler: Handler }> = [
       const limit = Math.min(100, Math.max(1, Number(event.queryStringParameters?.limit || 20)));
       const skip = (page - 1) * limit;
 
-      const filter: any = owner === "all" ? {} : { ownerId: me(event) };
+      const filter: any = owner === "all" ? {} : { ownerId: getOwnerId(event) };
       if (q) filter.$or = [{ url: { $regex: q, $options: "i" } }, { title: { $regex: q, $options: "i" } }];
       if (tag) filter.tags = tag;
 
-      const col = db.collection(process.env.COLLECTION!);
+      const col = db.collection(COLLECTION!);
       const cursor = col.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(limit);
       const [items, total] = await Promise.all([cursor.toArray(), col.countDocuments(filter)]);
       return json(200, {
@@ -115,7 +146,7 @@ const routes: Array<{ method: string, pattern: RegExp, handler: Handler }> = [
         return json(400, { error: "Field 'url' (http/https) is required" });
       }
       const doc = {
-        ownerId: me(event),
+        ownerId: getOwnerId(event),
         url: body.url.trim(),
         title: typeof body.title === "string" ? body.title.trim() : undefined,
         tags: Array.isArray(body.tags) ? body.tags.filter((t: any) => typeof t === "string") : [],
@@ -123,7 +154,7 @@ const routes: Array<{ method: string, pattern: RegExp, handler: Handler }> = [
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-      const col = db.collection(process.env.COLLECTION!);
+      const col = db.collection(COLLECTION!);
       const res = await col.insertOne(doc);
       return json(201, { _id: String(res.insertedId), ...doc });
     },

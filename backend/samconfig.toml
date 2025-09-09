@@ -9,3 +9,4 @@ confirm_changeset = true
 capabilities = "CAPABILITY_IAM"
 disable_rollback = true
 image_repositories = []
+parameter_overrides = "AllowedOrigins=\"http://localhost:5173\" UserPoolIdParam=\"ca-central-1_kC2cnQkT9\" UserPoolClientIdParam=\"5d97gkqadcj8861jmqkr49qm5c\" MongoSecretNameParam=\"dev/mongodb/uri\" DbNameParam=\"bookmark_vault\" CollectionParam=\"bookmarks\""

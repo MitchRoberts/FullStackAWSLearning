@@ -1,6 +1,29 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Bookmark Vault API (health + bookmarks)
+Description: Bookmark Vault API (health + bookmarks) with Cognito JWT
+Parameters:
+  AllowedOrigins:
+    Type: CommaDelimitedList
+    Default: http://localhost:5173
+    Description: Origins allowed by CORS (comma-separated)
+  UserPoolIdParam:
+    Type: String
+    Description: Cognito User Pool ID (e.g., ca-central-1_abc123)
+  UserPoolClientIdParam:
+    Type: String
+    Description: Cognito App Client ID (no secret; browser client)
+  MongoSecretNameParam:
+    Type: String
+    Default: dev/mongodb/uri
+    Description: Secrets Manager secret name that stores MongoDB connection string
+  DbNameParam:
+    Type: String
+    Default: bookmark_vault
+    Description: MongoDB database name
+  CollectionParam:
+    Type: String
+    Default: bookmarks
+    Description: MongoDB collection name
 Globals:
   Function:
     Runtime: nodejs20.x
@@ -8,23 +31,38 @@ Globals:
     MemorySize: 256
     Environment:
       Variables:
-        MONGODB_SECRET_ID: dev/mongodb/uri
-        DB_NAME: bookmark_vault
-        COLLECTION: bookmarks
+        MONGODB_SECRET_NAME:
+          Ref: MongoSecretNameParam
+        DB_NAME:
+          Ref: DbNameParam
+        COLLECTION:
+          Ref: CollectionParam
+        NODE_OPTIONS: --enable-source-maps
 Resources:
   HttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       CorsConfiguration:
         AllowOrigins:
-        - '*'
+          Ref: AllowedOrigins
         AllowHeaders:
         - content-type
-        - x-user-id
+        - authorization
         AllowMethods:
         - GET
         - POST
+        - PATCH
+        - DELETE
         - OPTIONS
+      Auth:
+        Authorizers:
+          CognitoJwt:
+            JwtConfiguration:
+              issuer:
+                Fn::Sub: https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPoolIdParam}
+              audience:
+              - Ref: UserPoolClientIdParam
+            IdentitySource: $request.header.Authorization
   ApiFn:
     Type: AWS::Serverless::Function
     Properties:
@@ -32,7 +70,7 @@ Resources:
       Policies:
       - AWSSecretsManagerGetSecretValuePolicy:
           SecretArn:
-            Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:dev/mongodb/uri-*
+            Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MongoSecretNameParam}-*
       Events:
         Health:
           Type: HttpApi
@@ -48,6 +86,8 @@ Resources:
               Ref: HttpApi
             Path: /bookmarks
             Method: GET
+            Auth:
+              Authorizer: CognitoJwt
         CreateBookmark:
           Type: HttpApi
           Properties:
@@ -55,10 +95,9 @@ Resources:
               Ref: HttpApi
             Path: /bookmarks
             Method: POST
+            Auth:
+              Authorizer: CognitoJwt
       CodeUri: ApiFn
-      Environment:
-        Variables:
-          NODE_OPTIONS: ' --enable-source-maps'
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -72,5 +111,10 @@ Resources:
       SamResourceId: ApiFn
 Outputs:
   ApiBaseUrl:
+    Description: Base URL for the HTTP API
     Value:
       Fn::Sub: https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+  ApiId:
+    Description: HTTP API ID
+    Value:
+      Ref: HttpApi

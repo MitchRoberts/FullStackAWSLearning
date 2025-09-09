@@ -1,6 +1,35 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Bookmark Vault API (health + bookmarks)
+Description: Bookmark Vault API (health + bookmarks) with Cognito JWT
+
+Parameters:
+  # --- frontend & API ---
+  AllowedOrigins:
+    Type: CommaDelimitedList
+    Default: http://localhost:5173
+    Description: Origins allowed by CORS (comma-separated)
+
+  # --- Cognito (from your User Pool) ---
+  UserPoolIdParam:
+    Type: String
+    Description: Cognito User Pool ID (e.g., ca-central-1_abc123)
+  UserPoolClientIdParam:
+    Type: String
+    Description: Cognito App Client ID (no secret; browser client)
+
+  # --- MongoDB connection ---
+  MongoSecretNameParam:
+    Type: String
+    Default: dev/mongodb/uri
+    Description: Secrets Manager secret name that stores MongoDB connection string
+  DbNameParam:
+    Type: String
+    Default: bookmark_vault
+    Description: MongoDB database name
+  CollectionParam:
+    Type: String
+    Default: bookmarks
+    Description: MongoDB collection name
 
 Globals:
   Function:
@@ -9,18 +38,30 @@ Globals:
     MemorySize: 256
     Environment:
       Variables:
-        MONGODB_SECRET_ID: dev/mongodb/uri
-        DB_NAME: bookmark_vault
-        COLLECTION: bookmarks
+        MONGODB_SECRET_NAME: !Ref MongoSecretNameParam
+        DB_NAME: !Ref DbNameParam
+        COLLECTION: !Ref CollectionParam
+        NODE_OPTIONS: --enable-source-maps
 
 Resources:
   HttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
+      # optional: StageName: $default
       CorsConfiguration:
-        AllowOrigins: ['*']
-        AllowHeaders: ['content-type','x-user-id']
-        AllowMethods: ['GET','POST','OPTIONS']
+        AllowOrigins: !Ref AllowedOrigins
+        AllowHeaders: ['content-type','authorization']  
+        AllowMethods: ['GET','POST','PATCH','DELETE','OPTIONS']
+      Auth:
+        Authorizers:
+          CognitoJwt:
+            JwtConfiguration:
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPoolIdParam}"
+              audience:
+                - !Ref UserPoolClientIdParam
+            IdentitySource: "$request.header.Authorization"
+        # You could set DefaultAuthorizer: CognitoJwt
+        # but we'll attach per-route so /health stays public.
 
   ApiFn:
     Type: AWS::Serverless::Function
@@ -28,17 +69,53 @@ Resources:
       Handler: src/handler.handler
       Policies:
         - AWSSecretsManagerGetSecretValuePolicy:
-            SecretArn: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:dev/mongodb/uri-*
+            # allow reading the specific secret name (ARNs have a random suffix -> use -*)
+            SecretArn: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MongoSecretNameParam}-*
       Events:
+        # Public health check
         Health:
           Type: HttpApi
-          Properties: { ApiId: !Ref HttpApi, Path: /health,     Method: GET }
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /health
+            Method: GET
+
+        # Protected routes (JWT required)
         GetBookmarks:
           Type: HttpApi
-          Properties: { ApiId: !Ref HttpApi, Path: /bookmarks,  Method: GET }
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /bookmarks
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwt
+
         CreateBookmark:
           Type: HttpApi
-          Properties: { ApiId: !Ref HttpApi, Path: /bookmarks,  Method: POST }
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /bookmarks
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwt
+
+        # UpdateBookmark:
+        #   Type: HttpApi
+        #   Properties:
+        #     ApiId: !Ref HttpApi
+        #     Path: /bookmarks/{id}
+        #     Method: PATCH
+        #     Auth:
+        #       Authorizer: CognitoJwt
+        # DeleteBookmark:
+        #   Type: HttpApi
+        #   Properties:
+        #     ApiId: !Ref HttpApi
+        #     Path: /bookmarks/{id}
+        #     Method: DELETE
+        #     Auth:
+        #       Authorizer: CognitoJwt
+
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -51,4 +128,8 @@ Resources:
 
 Outputs:
   ApiBaseUrl:
+    Description: Base URL for the HTTP API
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  ApiId:
+    Description: HTTP API ID
+    Value: !Ref HttpApi
